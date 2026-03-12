@@ -1,9 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+from app.models.database import engine
+from app.models.models import SQLModel
 
 from app.routers import digest
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    
+    SQLModel.metadata.create_all(engine)
+    yield
+    # SQLModel.metadata.drop_all(engine)
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
