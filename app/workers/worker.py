@@ -32,15 +32,6 @@ def download_video(url: str) -> str | None:
         return None
 
 def transcribe_video(video_path: str) -> str:
-    # import ffmpeg
-    # import re
-    # audio_path = re.sub(r'\.[^.]+$', '.mp3', video_path)
-    # try:
-    #     ffmpeg.input(video_path).output(audio_path).run()
-    #     print(f"Successfully converted {video_path} to {audio_path}")
-    # except ffmpeg.Error as e:
-    #     print(f"An error occurred: {e.stderr.decode()}")
-
 
     import whisper
     try:
