@@ -103,12 +103,29 @@ def describe_frames(video_path: str) -> str | None:
     model = Qwen3VLForConditionalGeneration.from_pretrained("Qwen/Qwen3-VL-2B-Instruct").to("cuda")
     processor = AutoProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
-    video_frames = [Image.open(frame_path) for frame_path in frame_paths]
-    prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n<video>\nWhat is happening in this video?<|im_end|>\n<|im_start|>assistant\n"
-    inputs = processor(text=[prompt], images=video_frames, return_tensors="pt")
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "video", "video": frame_paths},
+                {"type": "text", "text": "Describe this video."},
+            ],
+        }
+    ]
+
+    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    images, videos = process_vision_info(messages)
+    # Processor expects lists, not tuples (Qwen's process_vision_info can return tuples)
+    if isinstance(images, tuple):
+        images = list(images)
+    if isinstance(videos, tuple):
+        videos = list(videos)
+    # Each video must be a list of frames, not a tuple
+    videos = [list(v) if isinstance(v, tuple) else v for v in videos]
+    inputs = processor(text=text, images=images, videos=videos, return_tensors="pt")
     inputs = inputs.to(model.device)
 
-    generated_ids = model.generate(**inputs, max_new_tokens=100)
+    generated_ids = model.generate(**inputs)
     output = processor.batch_decode(generated_ids, skip_special_tokens=True)
     return output[0]
 
@@ -117,6 +134,12 @@ def describe_frames(video_path: str) -> str | None:
     # inputs = processor(frames, return_tensors="pt")
     # outputs = model.generate(**inputs)
     # return outputs.text
+
+
+
+
+
+
 
 
 
