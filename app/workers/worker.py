@@ -7,6 +7,12 @@ image = modal.Image.debian_slim().apt_install("git", "ffmpeg").run_commands(
     "pip install yt-dlp",
     "pip install git+https://github.com/openai/whisper.git",
     "pip install ffmpeg-python",
+    "pip install torchvision",
+    "pip install torch",
+    "pip install accelerate",
+    "pip install qwen-vl-utils",
+    "pip install pillow",
+    "pip install git+https://github.com/huggingface/transformers",
 )
 
 
@@ -81,11 +87,36 @@ def extract_frames(video_path: str) -> list[str]:
             .output(frame_path, vframes=1)
             .run(overwrite_output=True, quiet=True)
         )
-        frame_paths.append(frame_path)
+        if os.path.exists(frame_path):
+            frame_paths.append(frame_path)
     return frame_paths
 
-def describe_frames(frame_paths: list[str]) -> str | None:
-    pass
+def describe_frames(video_path: str) -> str | None:
+    frame_paths = extract_frames(video_path)
+    if not frame_paths:
+        return None
+    
+    from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+    from qwen_vl_utils import process_vision_info
+    from PIL import Image
+
+    model = Qwen3VLForConditionalGeneration.from_pretrained("Qwen/Qwen3-VL-2B-Instruct").to("cuda")
+    processor = AutoProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
+
+    video_frames = [Image.open(frame_path) for frame_path in frame_paths]
+    prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n<video>\nWhat is happening in this video?<|im_end|>\n<|im_start|>assistant\n"
+    inputs = processor(text=[prompt], images=video_frames, return_tensors="pt")
+    inputs = inputs.to(model.device)
+
+    generated_ids = model.generate(**inputs, max_new_tokens=100)
+    output = processor.batch_decode(generated_ids, skip_special_tokens=True)
+    return output[0]
+
+    # prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n<video>\nWhat is happening in this video?<|im_end|>\n<|im_start|>assistant\n"
+    
+    # inputs = processor(frames, return_tensors="pt")
+    # outputs = model.generate(**inputs)
+    # return outputs.text
 
 
 
@@ -95,11 +126,11 @@ async def process_video(url: str) -> str | None:
     if not video_info:
         return None
     transcription = transcribe_video(video_info["path"])
-    frames = extract_frames(video_info["path"])
+    visual_description = describe_frames(video_info["path"])
     return {
-        "transcript": transcription,
+        "transcription": transcription,
+        "visual_description": visual_description
     }
-
 
 @app.local_entrypoint()
 def main():
