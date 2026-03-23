@@ -92,6 +92,7 @@ def extract_frames(video_path: str) -> list[str]:
     return frame_paths
 
 def describe_frames(video_path: str) -> str | None:
+    # https://github.com/QwenLM/Qwen3-VL/blob/main/cookbooks/video_understanding.ipynb
     frame_paths = extract_frames(video_path)
     if not frame_paths:
         return None
@@ -115,25 +116,15 @@ def describe_frames(video_path: str) -> str | None:
 
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     images, videos = process_vision_info(messages)
-    # Processor expects lists, not tuples (Qwen's process_vision_info can return tuples)
-    if isinstance(images, tuple):
-        images = list(images)
-    if isinstance(videos, tuple):
-        videos = list(videos)
-    # Each video must be a list of frames, not a tuple
-    videos = [list(v) if isinstance(v, tuple) else v for v in videos]
+
     inputs = processor(text=text, images=images, videos=videos, return_tensors="pt")
     inputs = inputs.to(model.device)
 
-    generated_ids = model.generate(**inputs)
-    output = processor.batch_decode(generated_ids, skip_special_tokens=True)
-    return output[0]
-
-    # prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n<video>\nWhat is happening in this video?<|im_end|>\n<|im_start|>assistant\n"
+    generated_ids = model.generate(**inputs, max_new_tokens=512)
     
-    # inputs = processor(frames, return_tensors="pt")
-    # outputs = model.generate(**inputs)
-    # return outputs.text
+    generated_ids_trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)]
+    output = processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True)
+    return output[0]
 
 
 
