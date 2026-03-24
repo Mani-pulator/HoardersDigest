@@ -15,6 +15,8 @@ image = modal.Image.debian_slim().apt_install("git", "ffmpeg").run_commands(
     "pip install git+https://github.com/huggingface/transformers",
 )
 
+INTERVAL_LEN = 5
+FPS = 0.2
 
 
 def download_video(url: str) -> str | None:
@@ -72,12 +74,20 @@ def extract_frames(video_path: str) -> list[str]:
         or video_stream.get("duration", 0)
     )
 
-    parts = 5  # can modify later to get more or less frames
-    if duration <= 0 or parts <= 0:
+    print(f"Duration: {duration}")
+    if duration <= 0:
+        return []
+    
+    interval_len = INTERVAL_LEN
+    
+    parts = int(duration // interval_len)
+    if parts <= 0:
+        interval_len = interval_len//2
+        parts = int(duration // interval_len)
+    if parts <= 0:
         return []
 
-    interval_len = duration / parts
-    frame_paths: list[str] = []
+    frame_paths: list[str] = [] 
     for i in range(parts):
         t = min((i + 1) * interval_len, duration - 0.001)  # seek near end of each segment
         frame_path = f"{frames_dir}/frame_{i:04d}.jpg"
@@ -108,20 +118,21 @@ def describe_frames(video_path: str) -> str | None:
         {
             "role": "user",
             "content": [
-                {"type": "video", "video": frame_paths},
-                {"type": "text", "text": "Describe this video."},
+                {"type": "video", "video": frame_paths, "fps": FPS},
+                {"type": "text", "text": 
+                "This is a short video the user saved because they found it valuable. What is the main topic or advice being communicated? What are the key points or takeaways? Only report what you observe directly. Do not interpret tone, intent, or make assumptions. Ignore visual aesthetics, focus only on the substance and meaning of the content. If there is not enough information, say 'not enough information'."},
             ],
         }
     ]
 
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    images, videos = process_vision_info(messages)
+    images, videos, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
 
-    inputs = processor(text=text, images=images, videos=videos, return_tensors="pt")
+    inputs = processor(text=text, images=images, videos=videos, video_kwargs=video_kwargs, return_tensors="pt")
     inputs = inputs.to(model.device)
 
     generated_ids = model.generate(**inputs, max_new_tokens=512)
-    
+
     generated_ids_trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)]
     output = processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True)
     return output[0]
@@ -142,10 +153,12 @@ async def process_video(url: str) -> str | None:
     transcription = transcribe_video(video_info["path"])
     visual_description = describe_frames(video_info["path"])
     return {
+        "title": video_info["title"],
+        "description": video_info["description"],
         "transcription": transcription,
         "visual_description": visual_description
     }
 
 @app.local_entrypoint()
 def main():
-    print(process_video.remote("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
+    print(process_video.remote("https://www.facebook.com/reel/1255321086186215/"))
