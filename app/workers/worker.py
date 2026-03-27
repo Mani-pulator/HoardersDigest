@@ -12,8 +12,11 @@ image = modal.Image.debian_slim().apt_install("git", "ffmpeg").run_commands(
     "pip install accelerate",
     "pip install qwen-vl-utils",
     "pip install pillow",
+    "pip install bitsandbytes",
     "pip install git+https://github.com/huggingface/transformers",
 )
+
+summarize_image = modal.Image.debian_slim().pip_install("transformers", "torch", "accelerate")
 
 INTERVAL_LEN = 5
 FPS = 0.2
@@ -138,15 +141,79 @@ def describe_frames(video_path: str) -> str | None:
     return output[0]
 
 
+def format_transcripts(saveTranscripts: list[dict]) -> str:
+    output = []
+    for i, r in enumerate(saveTranscripts):
+        if r is None: 
+            continue
+        output.append(f"Video {i+1}: {r.get('title', 'No title')}")
+        output.append(f"Description: {r.get('description', 'No description')}")
+        output.append(f"Transcript: {r.get('transcription', 'No transcript')}")
+        output.append(f"Visual: {r.get('visual_description', 'No visualdescription')}")
+        output.append("")
+    return "\n".join(output)
 
 
 
+@app.function(image=summarize_image, gpu="any")
+def summarize_collection(collection_name: str, saveTranscripts: list[dict]) -> str | None:
+    import transformers
+    import torch
+
+    # model_id = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+    model_id = "mistralai/Mistral-7B-Instruct-v0.3"
+
+    pipeline = transformers.pipeline(
+        "text-generation",
+        model=model_id,
+        model_kwargs={"torch_dtype": torch.bfloat16},
+        device_map="auto",
+    )
+
+    formatted_transcripts = format_transcripts(saveTranscripts)
+    system_prompt = f"""You are an expert at synthesizing information. 
+    You will be given transcripts from multiple short videos that a user saved in a collection called {collection_name}. 
+    Your job is to extract and organize the key insights, advice, and information across all videos into a coherent summary.
+    Based on the nature of this collection, choose the appropriate format and level of detail.
+    Group related ideas together. Remove redundancy. Be thorough and detailed. Preserve important nuances, specific strategies, and actionable steps. Do not sacrifice detail for brevity.
+    For advice or educational content, be thorough and preserve specific strategies and actionable steps.
+    For recipes or tutorials, use structured step-by-step format.
+    For general inspiration or entertainment, be concise.
+    Do not sacrifice detail for brevity."""
+
+    user_prompt = f"""Here are the transcripts from {len(saveTranscripts)} videos in the "{collection_name}" collection:
+    {formatted_transcripts}
+    Please provide an organized summary of the key insights across all these videos."""
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    
+
+    terminators = [
+        pipeline.tokenizer.eos_token_id,
+        # pipeline.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+        pipeline.tokenizer.convert_tokens_to_ids("<|/s|>")
+    ]
+
+    outputs = pipeline(
+        messages,
+        max_new_tokens=min(len(saveTranscripts) * 500, 8192),
+        eos_token_id=terminators,
+        do_sample=True,
+        temperature=0.6,
+        top_p=0.9,
+    )
+
+    print(outputs[0]["generated_text"][-1])
+
+    
 
 
 
 
 @app.function(image=image, gpu="any")
-async def process_video(url: str) -> str | None:
+def process_video(url: str) -> str | None:
     video_info = download_video(url)
     if not video_info:
         return None
@@ -159,6 +226,23 @@ async def process_video(url: str) -> str | None:
         "visual_description": visual_description
     }
 
+@app.function(image=image, gpu="any")
+def process_collection(collection_id: int,collection_name: str, saves: list[dict]) -> str | None:
+    processed_saves = list(process_video.map([s["url"] for s in saves]))
+    summarized_collection = summarize_collection.remote(collection_name, processed_saves)
+    pass
+
 @app.local_entrypoint()
 def main():
-    print(process_video.remote("https://www.facebook.com/reel/1255321086186215/"))
+    #gotta hardcode for testing
+    process_collection.remote(1, "career", 
+        [
+            {"url": "https://www.facebook.com/reel/1255321086186215/"},
+            {"url": "https://www.facebook.com/reel/850301531156171/"},
+            {"url": "https://www.facebook.com/reel/854445530630162/"},
+            {"url": "https://www.facebook.com/reel/1467951958181218/"},
+            {"url": "https://www.facebook.com/reel/1864924270875676/"},
+        ]
+    )
+
+    
